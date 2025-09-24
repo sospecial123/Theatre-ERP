@@ -4,35 +4,43 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Theatre ERP – Standalone (SQLite in the Browser)</title>
-  <!-- FULL CSS + JS from final canvas version goes here -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js"></script>
+  <style>
+    body{font-family:Arial, sans-serif;margin:0;padding:0;}
+    .app{display:grid;grid-template-columns:200px 1fr;min-height:100vh;}
+    .sidebar{background:#f1f5f9;padding:10px;}
+    .main{padding:20px;}
+    .nav button{display:block;width:100%;margin:5px 0;padding:8px;}
+  </style>
 </head>
 <body>
   <div class="app">
     <aside class="sidebar">
-      <div class="brand"><div class="logo"></div>
-        <div><h1>Theatre ERP</h1><div class="small">SQLite-in-browser · GitHub Pages ready</div></div>
-      </div>
+      <h2>Theatre ERP</h2>
       <div class="nav" id="nav"></div>
-      <hr>
-      <div class="grid">
-        <button class="btn" id="btn-export">Export DB (.sqlite)</button>
-        <label class="btn ghost" for="file-import">Import DB</label>
-        <input id="file-import" type="file" accept=".sqlite,.db,.bin,application/octet-stream" class="hidden" />
-        <button class="btn warn" id="btn-backup">Save to Browser</button>
-        <button class="btn err" id="btn-reset">Reset (New DB)</button>
-      </div>
+      <button id="btn-sample">Load Sample Data</button>
+      <button id="btn-export">Export DB</button>
+      <input id="file-import" type="file" />
     </aside>
     <main class="main">
-      <div class="toolbar"><div class="grow"></div>
-        <button class="btn" id="btn-sample">Load Sample Data</button>
-      </div>
       <section id="view"></section>
     </main>
   </div>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js"></script>
   <script>
-    // === FULL JS logic for Theatre ERP ===
-    // (Database bootstrap, routing, Config, Accounts, Productions, Events, Volunteers, Income, Expenses, Reports)
+    let SQL, db;
+    const MODULES=[{key:'dashboard',label:'Dashboard'}];
+    async function init(){
+      SQL = await initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${f}` });
+      db = new SQL.Database();
+      renderNav(); route('dashboard');
+    }
+    function exec(sql){ try{ return db.exec(sql); }catch(e){console.error(e); return [];} }
+    function renderNav(){ const nav=document.getElementById('nav'); nav.innerHTML=''; MODULES.forEach(m=>{ const b=document.createElement('button'); b.textContent=m.label; b.onclick=()=>route(m.key); nav.appendChild(b); }); }
+    function route(key){ const v=document.getElementById('view'); v.innerHTML=''; if(key==='dashboard'){ v.innerHTML='<h3>Dashboard Loaded</h3>'; } }
+    document.getElementById('btn-sample').onclick=()=>{ db.run("CREATE TABLE demo(id,name); INSERT INTO demo VALUES(1,'Hamlet');"); alert('Sample Data Loaded'); };
+    document.getElementById('btn-export').onclick=()=>{ const data=db.export(); const blob=new Blob([data]); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='theatre-erp.sqlite'; a.click(); };
+    document.getElementById('file-import').onchange=async(e)=>{ const f=e.target.files[0]; if(!f) return; const buf=new Uint8Array(await f.arrayBuffer()); db = new SQL.Database(buf); route('dashboard'); };
+    init();
   </script>
 </body>
 </html>
