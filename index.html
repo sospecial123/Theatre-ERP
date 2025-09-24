@@ -4,43 +4,189 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Theatre ERP – Standalone (SQLite in the Browser)</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js"></script>
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
   <style>
-    body{font-family:Arial, sans-serif;margin:0;padding:0;}
-    .app{display:grid;grid-template-columns:200px 1fr;min-height:100vh;}
-    .sidebar{background:#f1f5f9;padding:10px;}
-    .main{padding:20px;}
-    .nav button{display:block;width:100%;margin:5px 0;padding:8px;}
+    :root{ --bg:#f7fbff; --panel:#ffffff; --ink:#0f172a; --muted:#64748b; --line:#e2e8f0; --pri:#2563eb; --pri-ghost:#eaf1ff; --ok:#059669; --warn:#b45309; --err:#b91c1c; }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{margin:0;font:14px/1.4 system-ui,Segoe UI,Roboto,Helvetica,Arial;color:var(--ink);background:var(--bg)}
+    .app{display:grid;grid-template-columns:270px 1fr;min-height:100vh}
+    .sidebar{background:#fff;border-right:1px solid var(--line);padding:16px;position:sticky;top:0;height:100vh}
+    .brand{display:flex;gap:10px;align-items:center;margin-bottom:12px}
+    .brand .logo{width:34px;height:34px;border-radius:8px;background:linear-gradient(135deg,#93c5fd,#2563eb);} 
+    .brand h1{font-size:18px;margin:0}
+    .nav{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+    .nav button{appearance:none;border:1px solid var(--line);background:var(--panel);padding:10px 12px;border-radius:10px;text-align:left;cursor:pointer}
+    .nav button.active{border-color:var(--pri);background:var(--pri-ghost)}
+    .main{padding:18px}
+    .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+    .toolbar .grow{flex:1}
+    .btn{appearance:none;border:1px solid var(--line);background:var(--panel);padding:8px 12px;border-radius:10px;cursor:pointer}
+    .btn.pri{background:var(--pri);border-color:var(--pri);color:#fff}
+    .btn.warn{background:var(--warn);border-color:var(--warn);color:#fff}
+    .btn.err{background:var(--err);border-color:var(--err);color:#fff}
+    .card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px}
+    .grid{display:grid;gap:12px}
+    .grid.cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}
+    table{width:100%;border-collapse:separate;border-spacing:0}
+    th,td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left}
+    th{background:#f8fafc;position:sticky;top:0}
+    .stat{display:flex;flex-direction:column;padding:12px;border:1px solid var(--line);border-radius:12px;background:#fff}
+    .stat .k{font-size:12px;color:var(--muted)}
+    .stat .v{font-size:20px;font-weight:700}
+    .note{font-size:12px;color:var(--muted)}
+    .hidden{display:none}
   </style>
 </head>
 <body>
   <div class="app">
     <aside class="sidebar">
-      <h2>Theatre ERP</h2>
+      <div class="brand">
+        <div class="logo" aria-hidden="true"></div>
+        <div>
+          <h1>Theatre ERP</h1>
+          <div class="note">SQLite-in-browser · GitHub Pages ready</div>
+        </div>
+      </div>
       <div class="nav" id="nav"></div>
-      <button id="btn-sample">Load Sample Data</button>
-      <button id="btn-export">Export DB</button>
-      <input id="file-import" type="file" />
+      <hr style="border:none;border-top:1px solid var(--line);margin:12px 0">
+      <div class="grid">
+        <button class="btn" id="btn-export">Export DB (.sqlite)</button>
+        <label class="btn" for="file-import" style="text-align:center">Import DB</label>
+        <input id="file-import" type="file" accept=".sqlite,.db,.bin,application/octet-stream" class="hidden" />
+        <button class="btn warn" id="btn-backup">Save to Browser</button>
+        <button class="btn err" id="btn-reset">Reset (New DB)</button>
+      </div>
     </aside>
     <main class="main">
+      <div class="toolbar">
+        <div class="grow"></div>
+        <button class="btn" id="btn-sample">Load Sample Data</button>
+      </div>
       <section id="view"></section>
     </main>
   </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js" crossorigin="anonymous"></script>
   <script>
-    let SQL, db;
-    const MODULES=[{key:'dashboard',label:'Dashboard'}];
-    async function init(){
-      SQL = await initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${f}` });
-      db = new SQL.Database();
-      renderNav(); route('dashboard');
+let SQL, db;
+
+// modules (only a few to keep this file concise)
+const MODULES = [
+  {key:'dashboard', label:'Dashboard'},
+  {key:'productions', label:'Productions'},
+  {key:'events', label:'Events'},
+  {key:'volunteers', label:'Volunteers'},
+  {key:'income', label:'Income'},
+  {key:'expenses', label:'Expenses'}
+];
+
+// ---------- Minimal IndexedDB store ----------
+const idbStore = {
+  dbName:'theatre-erp', dbVersion:1, store:'kv',
+  _ensure(open){ if(!open.result.objectStoreNames.contains(this.store)) open.result.createObjectStore(this.store); },
+  get(key){ return new Promise((res,rej)=>{ const o=indexedDB.open(this.dbName,this.dbVersion); o.onupgradeneeded=()=>this._ensure(o); o.onerror=()=>rej(o.error); o.onsuccess=()=>{ const tx=o.result.transaction(this.store,'readonly'); const st=tx.objectStore(this.store); const rq=st.get(key); rq.onsuccess=()=>res(rq.result||null); rq.onerror=()=>rej(rq.error); }; }); },
+  set(key,val){ return new Promise((res,rej)=>{ const o=indexedDB.open(this.dbName,this.dbVersion); o.onupgradeneeded=()=>this._ensure(o); o.onerror=()=>rej(o.error); o.onsuccess=()=>{ const tx=o.result.transaction(this.store,'readwrite'); const st=tx.objectStore(this.store); const rq=st.put(val,key); rq.onsuccess=()=>res(true); rq.onerror=()=>rej(rq.error); }; }); },
+  del(key){ return new Promise((res,rej)=>{ const o=indexedDB.open(this.dbName,this.dbVersion); o.onupgradeneeded=()=>this._ensure(o); o.onerror=()=>rej(o.error); o.onsuccess=()=>{ const tx=o.result.transaction(this.store,'readwrite'); const st=tx.objectStore(this.store); const rq=st.delete(key); rq.onsuccess=()=>res(true); rq.onerror=()=>rej(rq.error); }; }); }
+};
+
+// ---------- Helpers ----------
+function el(t,a={},c=[]){ const n=document.createElement(t); for(const [k,v] of Object.entries(a)){ if(k==='class') n.className=v; else if(k==='html') n.innerHTML=v; else if(k.startsWith('on')) n.addEventListener(k.slice(2),v); else n.setAttribute(k,v); } for(const ch of [].concat(c)) n.append(ch instanceof Node? ch: document.createTextNode(ch)); return n; }
+function tableHead(cols){ const tr=el('tr'); cols.forEach(c=>tr.append(el('th',{},c))); return el('thead',{},[tr]); }
+function money(n){ n=Number(n||0); return new Intl.NumberFormat(undefined,{style:'currency',currency:'USD'}).format(n); }
+
+// ---------- UI ----------
+function renderNav(){
+  const nav=document.getElementById('nav'); nav.innerHTML='';
+  MODULES.forEach(m=>{ nav.append(el('button',{type:'button','data-key':m.key, onclick:()=>route(m.key)},[m.label])); });
+}
+function route(key){
+  const v=document.getElementById('view'); v.innerHTML='';
+  if(key==='dashboard') return renderDashboard(v);
+  if(key==='productions') return renderProductions(v);
+  if(key==='events') return renderEvents(v);
+  if(key==='volunteers') return renderVolunteers(v);
+  if(key==='income') return renderTx(v,'income');
+  if(key==='expenses') return renderTx(v,'expense');
+}
+
+// ---------- Queries ----------
+function execObj(sql){ const stmt=db.prepare(sql); const out=[]; while(stmt.step()) out.push(stmt.getAsObject()); stmt.free(); return out; }
+function run(sql){ db.exec(sql); }
+
+// ---------- Views ----------
+function renderDashboard(v){
+  const income=execObj(`SELECT IFNULL(SUM(amount),0) s FROM transactions WHERE type='income'`)[0]?.s||0;
+  const expense=execObj(`SELECT IFNULL(SUM(amount),0) s FROM transactions WHERE type='expense'`)[0]?.s||0;
+  const net=income-expense;
+  v.append(el('div',{class:'grid cols-3'},[
+    stat('Income', money(income)), stat('Expenses', money(expense)), stat('Net', money(net))
+  ]));
+}
+function stat(k,v){ return el('div',{class:'stat'},[el('div',{class:'k'},k), el('div',{class:'v'},String(v))]); }
+
+function renderProductions(v){
+  const rows=execObj(`SELECT * FROM productions ORDER BY id DESC`);
+  const tbl=el('table'); tbl.append(tableHead(['Title','Open','Close','Notes']));
+  rows.forEach(r=> tbl.append(el('tr',{},[ el('td',{},r.title), el('td',{},r.open_date||''), el('td',{},r.close_date||''), el('td',{},r.notes||'') ])));
+  v.append(el('div',{class:'card'},[tbl]));
+}
+function renderEvents(v){
+  const rows=execObj(`SELECT e.*, (SELECT title FROM productions p WHERE p.id=e.production_id) AS production FROM events e ORDER BY start DESC`);
+  const tbl=el('table'); tbl.append(tableHead(['Production','Kind','Start','End','Venue','Notes']));
+  rows.forEach(r=> tbl.append(el('tr',{},[ el('td',{},r.production||''), el('td',{},r.kind||''), el('td',{},r.start||''), el('td',{},r.end||''), el('td',{},r.venue||''), el('td',{},r.notes||'') ])));
+  v.append(el('div',{class:'card'},[tbl]));
+}
+function renderVolunteers(v){
+  const rows=execObj(`SELECT * FROM volunteers ORDER BY name`);
+  const tbl=el('table'); tbl.append(tableHead(['Name','Email','Phone','Skills','Notes']));
+  rows.forEach(r=> tbl.append(el('tr',{},[ el('td',{},r.name), el('td',{},r.email||''), el('td',{},r.phone||''), el('td',{},r.skills||''), el('td',{},r.notes||'') ])));
+  v.append(el('div',{class:'card'},[tbl]));
+}
+function renderTx(v, kind){
+  const rows=execObj(`SELECT t.*, (SELECT title FROM productions p WHERE p.id=t.production_id) AS production FROM transactions t WHERE type='${kind}' ORDER BY tx_date DESC`);
+  const tbl=el('table'); tbl.append(tableHead(['Date','Amount','Category','Production','Method','Memo']));
+  rows.forEach(r=> tbl.append(el('tr',{},[ el('td',{},r.tx_date), el('td',{},money(r.amount)), el('td',{},r.category||''), el('td',{},r.production||''), el('td',{},r.method||''), el('td',{},r.memo||'') ])));
+  v.append(el('div',{class:'card'},[tbl]));
+}
+
+// ---------- Export/Import ----------
+function exportDb(){ const data=db.export(); const blob=new Blob([data],{type:'application/octet-stream'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='theatre-erp.sqlite'; a.click(); URL.revokeObjectURL(a.href); }
+async function importDb(file){ const buf=new Uint8Array(await file.arrayBuffer()); db.close(); db=new SQL.Database(buf); await idbStore.set('sqlite', buf); route('dashboard'); }
+
+// ---------- Auto-load flow ----------
+async function init(){
+  SQL = await initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${f}` });
+  try{
+    const persisted = await idbStore.get('sqlite');
+    if(persisted){ db = new SQL.Database(new Uint8Array(persisted)); }
+    else {
+      // First visit: try to auto-load theatre-erp-sample.sqlite from the same folder
+      const resp = await fetch('theatre-erp-sample.sqlite');
+      if(resp.ok){
+        const buf = new Uint8Array(await resp.arrayBuffer());
+        db = new SQL.Database(buf);
+        await idbStore.set('sqlite', buf);
+      } else {
+        db = new SQL.Database(); // empty fallback
+      }
     }
-    function exec(sql){ try{ return db.exec(sql); }catch(e){console.error(e); return [];} }
-    function renderNav(){ const nav=document.getElementById('nav'); nav.innerHTML=''; MODULES.forEach(m=>{ const b=document.createElement('button'); b.textContent=m.label; b.onclick=()=>route(m.key); nav.appendChild(b); }); }
-    function route(key){ const v=document.getElementById('view'); v.innerHTML=''; if(key==='dashboard'){ v.innerHTML='<h3>Dashboard Loaded</h3>'; } }
-    document.getElementById('btn-sample').onclick=()=>{ db.run("CREATE TABLE demo(id,name); INSERT INTO demo VALUES(1,'Hamlet');"); alert('Sample Data Loaded'); };
-    document.getElementById('btn-export').onclick=()=>{ const data=db.export(); const blob=new Blob([data]); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='theatre-erp.sqlite'; a.click(); };
-    document.getElementById('file-import').onchange=async(e)=>{ const f=e.target.files[0]; if(!f) return; const buf=new Uint8Array(await f.arrayBuffer()); db = new SQL.Database(buf); route('dashboard'); };
-    init();
+  } catch(e){
+    console.error(e);
+    db = new SQL.Database(); // safe fallback
+  }
+  renderNav();
+  route('dashboard');
+}
+
+document.addEventListener('DOMContentLoaded', ()=>{
+  document.getElementById('btn-export').onclick = exportDb;
+  document.getElementById('file-import').addEventListener('change', e=>{ const f=e.target.files[0]; if(f) importDb(f); });
+  document.getElementById('btn-backup').onclick = async ()=>{ const data=db.export(); await idbStore.set('sqlite', data); alert('Saved to this browser.'); };
+  document.getElementById('btn-reset').onclick = async ()=>{ if(!confirm('Reset local DB?')) return; await idbStore.del('sqlite'); location.reload(); };
+  document.getElementById('btn-sample').onclick = ()=> alert('Sample DB auto-loads on first visit. To reload, click Reset (New DB).');
+  init();
+});
   </script>
 </body>
 </html>
