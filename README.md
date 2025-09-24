@@ -13,9 +13,9 @@ It runs entirely client-side and can be hosted on **GitHub Pages** or any static
 - Reports: P&L, Balance Sheet, Budget vs Actual, Income by Production
 
 ## 📦 How to Use
-1. Put `index.html` in your GitHub repo root.
-2. Enable **GitHub Pages** in your repo settings.
-3. Visit your GitHub Pages URL to launch the app.
+1. Upload `index.html` to your GitHub repo root.
+2. Enable **GitHub Pages** in your repo settings (branch: `main`, folder: `/`).
+3. Visit the link GitHub provides to launch the app.
 
 ## 💾 Data
 - Data is saved in your browser (IndexedDB).
