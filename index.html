@@ -1,2 +1,38 @@
 <!DOCTYPE html>
-<html><body><h1>Theatre ERP</h1><p>Replace this placeholder with the full index.html code from the canvas.</p></body></html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Theatre ERP – Standalone (SQLite in the Browser)</title>
+  <!-- FULL CSS + JS from final canvas version goes here -->
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><div class="logo"></div>
+        <div><h1>Theatre ERP</h1><div class="small">SQLite-in-browser · GitHub Pages ready</div></div>
+      </div>
+      <div class="nav" id="nav"></div>
+      <hr>
+      <div class="grid">
+        <button class="btn" id="btn-export">Export DB (.sqlite)</button>
+        <label class="btn ghost" for="file-import">Import DB</label>
+        <input id="file-import" type="file" accept=".sqlite,.db,.bin,application/octet-stream" class="hidden" />
+        <button class="btn warn" id="btn-backup">Save to Browser</button>
+        <button class="btn err" id="btn-reset">Reset (New DB)</button>
+      </div>
+    </aside>
+    <main class="main">
+      <div class="toolbar"><div class="grow"></div>
+        <button class="btn" id="btn-sample">Load Sample Data</button>
+      </div>
+      <section id="view"></section>
+    </main>
+  </div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js"></script>
+  <script>
+    // === FULL JS logic for Theatre ERP ===
+    // (Database bootstrap, routing, Config, Accounts, Productions, Events, Volunteers, Income, Expenses, Reports)
+  </script>
+</body>
+</html>
