@@ -1,1 +1,504 @@
-<!DOCTYPE html><html><head><title>Theatre ERP</title></head><body><h1>Theatre ERP App</h1></body></html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Theatre ERP – Standalone (SQLite in the Browser)</title>
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js" crossorigin="anonymous"></script>
+  <style>
+    :root{ --bg:#f7fbff; --panel:#ffffff; --ink:#0f172a; --muted:#64748b; --line:#e2e8f0; --pri:#2563eb; --pri-ghost:#eaf1ff; --ok:#059669; --warn:#b45309; --err:#b91c1c; }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{margin:0;font:14px/1.4 system-ui,Segoe UI,Roboto,Helvetica,Arial;color:var(--ink);background:var(--bg)}
+    .app{display:grid;grid-template-columns:270px 1fr;min-height:100vh}
+    .sidebar{background:#fff;border-right:1px solid var(--line);padding:16px;position:sticky;top:0;height:100vh}
+    .brand{display:flex;gap:10px;align-items:center;margin-bottom:12px}
+    .brand .logo{width:34px;height:34px;border-radius:8px;background:linear-gradient(135deg,#93c5fd,#2563eb);} 
+    .brand h1{font-size:18px;margin:0}
+    .nav{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+    .nav button{appearance:none;border:1px solid var(--line);background:var(--panel);padding:10px 12px;border-radius:10px;text-align:left;cursor:pointer}
+    .nav button.active{border-color:var(--pri);background:var(--pri-ghost)}
+    .main{padding:18px}
+    .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+    .toolbar .grow{flex:1}
+    .btn{appearance:none;border:1px solid var(--line);background:var(--panel);padding:8px 12px;border-radius:10px;cursor:pointer}
+    .btn.pri{background:var(--pri);border-color:var(--pri);color:#fff}
+    .btn.warn{background:var(--warn);border-color:var(--warn);color:#fff}
+    .btn.err{background:var(--err);border-color:var(--err);color:#fff}
+    .card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px}
+    .grid{display:grid;gap:12px}
+    .grid.cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .grid.cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}
+    table{width:100%;border-collapse:separate;border-spacing:0}
+    th,td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left}
+    th{background:#f8fafc;position:sticky;top:0}
+    .stat{display:flex;flex-direction:column;padding:12px;border:1px solid var(--line);border-radius:12px;background:#fff}
+    .stat .k{font-size:12px;color:var(--muted)}
+    .stat .v{font-size:20px;font-weight:700}
+    .note{font-size:12px;color:var(--muted)}
+    .hidden{display:none}
+
+    /* --- Right Config Drawer --- */
+    .config-drawer { position: fixed; top: 0; right: -420px; width: 400px; height: 100vh;
+      background: #fff; border-left: 1px solid var(--line);
+      box-shadow: -6px 0 20px rgba(0,0,0,.06);
+      transition: right .25s ease; z-index: 50;
+      display: flex; flex-direction: column; }
+    .config-drawer.open { right: 0; }
+    .config-header { display:flex; align-items:center; justify-content:space-between;
+      padding:12px 14px; border-bottom:1px solid var(--line); }
+    .config-body { padding:14px; overflow:auto; }
+    .cfg-group { margin-bottom:16px; }
+    .cfg-list { border:1px solid var(--line); border-radius:10px; padding:10px }
+    .cfg-list .row { display:flex; align-items:center; gap:8px; margin:6px 0 }
+    .cfg-list input[type=text]{ flex:1; padding:8px 10px; border:1px solid var(--line); border-radius:8px; }
+    .cfg-actions .btn { margin-right:6px }
+    .config-tabbar { display:flex; gap:6px; flex-wrap:wrap; margin:8px 0 12px }
+    .config-tabbar .btn.active { background: var(--pri-ghost); border-color: var(--pri); }
+    .cfg-note { font-size:12px; color:var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo" aria-hidden="true"></div>
+        <div>
+          <h1>Theatre ERP</h1>
+          <div class="note">SQLite-in-browser · GitHub Pages ready</div>
+        </div>
+      </div>
+      <div class="nav" id="nav"></div>
+      <hr style="border:none;border-top:1px solid var(--line);margin:12px 0">
+      <div class="grid">
+        <button class="btn" id="btn-export">Export DB (.sqlite)</button>
+        <label class="btn" for="file-import" style="text-align:center">Import DB</label>
+        <input id="file-import" type="file" accept=".sqlite,.db,.bin,application/octet-stream" class="hidden" />
+        <button class="btn warn" id="btn-backup">Save to Browser</button>
+        <button class="btn err" id="btn-reset">Reset (New DB)</button>
+      </div>
+    </aside>
+    <main class="main">
+      <div class="toolbar">
+        <div class="grow"></div>
+        <button class="btn" id="btn-sample">Load Sample Data</button>
+        <button id="btn-config-gear" class="btn">⚙️ Config</button>
+      </div>
+      <section id="view"></section>
+    </main>
+  </div>
+
+  <!-- Right-side Config Drawer -->
+  <aside id="config-drawer" class="config-drawer" aria-hidden="true">
+    <div class="config-header">
+      <strong>Configuration</strong>
+      <div><button class="btn" id="cfg-close">✖</button></div>
+    </div>
+    <div class="config-body">
+      <div class="config-tabbar">
+        <button class="btn" data-cfg-tab="categories">Categories</button>
+        <button class="btn" data-cfg-tab="rates">Rates</button>
+        <button class="btn" data-cfg-tab="banks">Bank Details</button>
+        <button class="btn warn" data-cfg-tab="maintenance">Maintenance</button>
+      </div>
+      <div id="cfg-content"></div>
+    </div>
+  </aside>
+
+  <script>
+let SQL, db;
+const MODULES = [
+  {key:'dashboard', label:'Dashboard'},
+  {key:'productions', label:'Productions'},
+  {key:'events', label:'Events'},
+  {key:'volunteers', label:'Volunteers'},
+  {key:'income', label:'Income'},
+  {key:'expenses', label:'Expenses'}
+];
+
+const idbStore = {
+  dbName:'theatre-erp', dbVersion:1, store:'kv',
+  _ensure(open){ if(!open.result.objectStoreNames.contains(this.store)) open.result.createObjectStore(this.store); },
+  get(key){ return new Promise((res,rej)=>{ const o=indexedDB.open(this.dbName,this.dbVersion); o.onupgradeneeded=()=>this._ensure(o); o.onerror=()=>rej(o.error); o.onsuccess=()=>{ const tx=o.result.transaction(this.store,'readonly'); const st=tx.objectStore(this.store); const rq=st.get(key); rq.onsuccess=()=>res(rq.result||null); rq.onerror=()=>rej(rq.error); }; }); },
+  set(key,val){ return new Promise((res,rej)=>{ const o=indexedDB.open(this.dbName,this.dbVersion); o.onupgradeneeded=()=>this._ensure(o); o.onerror=()=>rej(o.error); o.onsuccess=()=>{ const tx=o.result.transaction(this.store,'readwrite'); const st=tx.objectStore(this.store); const rq=st.put(val,key); rq.onsuccess=()=>res(true); rq.onerror=()=>rej(rq.error); }; }); },
+  del(key){ return new Promise((res,rej)=>{ const o=indexedDB.open(this.dbName,this.dbVersion); o.onupgradeneeded=()=>this._ensure(o); o.onerror=()=>rej(o.error); o.onsuccess=()=>{ const tx=o.result.transaction(this.store,'readwrite'); const st=tx.objectStore(this.store); const rq=st.delete(key); rq.onsuccess=()=>res(true); rq.onerror=()=>rej(rq.error); }; }); }
+};
+
+function el(t,a={},c=[]){ const n=document.createElement(t); for(const [k,v] of Object.entries(a)){ if(k==='class') n.className=v; else if(k==='html') n.innerHTML=v; else if(k.startsWith('on')) n.addEventListener(k.slice(2),v); else n.setAttribute(k,v); } for(const ch of [].concat(c)) n.append(ch instanceof Node? ch: document.createTextNode(ch)); return n; }
+function tableHead(cols){ const tr=el('tr'); cols.forEach(c=>tr.append(el('th',{},c))); return el('thead',{},[tr]); }
+function money(n){ n=Number(n||0); return new Intl.NumberFormat(undefined,{style:'currency',currency:'USD'}).format(n); }
+const cap=s=> s? s[0].toUpperCase()+s.slice(1):'';
+
+function renderNav(){
+  const nav=document.getElementById('nav'); nav.innerHTML='';
+  MODULES.forEach(m=> nav.append(el('button',{type:'button','data-key':m.key,onclick:()=>route(m.key)},[m.label])) );
+}
+function route(key){
+  const v=document.getElementById('view'); v.innerHTML='';
+  const map={
+    dashboard: renderDashboard,
+    productions: renderProductions,
+    events: renderEvents,
+    volunteers: renderVolunteers,
+    income: ()=>renderTx('income'),
+    expenses: ()=>renderTx('expense')
+  };
+  (map[key]||(()=>v.append('Not implemented')))(v);
+}
+
+function execObj(sql){ const stmt=db.prepare(sql); const out=[]; while(stmt.step()) out.push(stmt.getAsObject()); stmt.free(); return out; }
+function run(sql){ db.exec(sql); }
+
+function bootstrap(){
+  run(`
+    PRAGMA foreign_keys = ON;
+    CREATE TABLE IF NOT EXISTS config_keys (key TEXT PRIMARY KEY, value TEXT);
+    CREATE TABLE IF NOT EXISTS lists (id INTEGER PRIMARY KEY AUTOINCREMENT, group_key TEXT NOT NULL, value TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_lists_group ON lists(group_key);
+    CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, name TEXT NOT NULL, type TEXT CHECK(type IN ('Asset','Liability','Equity','Revenue','Expense')) NOT NULL, parent_id INTEGER);
+    CREATE TABLE IF NOT EXISTS productions (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, open_date TEXT, close_date TEXT, notes TEXT);
+    CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, production_id INTEGER, kind TEXT, start TEXT, end TEXT, venue TEXT, notes TEXT);
+    CREATE INDEX IF NOT EXISTS idx_events_prod ON events(production_id);
+    CREATE TABLE IF NOT EXISTS volunteers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT, phone TEXT, skills TEXT, notes TEXT);
+    CREATE TABLE IF NOT EXISTS volunteer_availability (id INTEGER PRIMARY KEY AUTOINCREMENT, volunteer_id INTEGER, weekday INTEGER, start TEXT, end TEXT);
+    CREATE TABLE IF NOT EXISTS budgets (id INTEGER PRIMARY KEY AUTOINCREMENT, production_id INTEGER, category TEXT, amount REAL);
+    CREATE INDEX IF NOT EXISTS idx_budgets_prod ON budgets(production_id);
+    CREATE TABLE IF NOT EXISTS transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, tx_date TEXT NOT NULL, type TEXT CHECK(type IN ('income','expense')) NOT NULL, amount REAL NOT NULL, account_id INTEGER, production_id INTEGER, event_id INTEGER, method TEXT, category TEXT, memo TEXT);
+    CREATE INDEX IF NOT EXISTS idx_tx_date ON transactions(tx_date);
+    CREATE INDEX IF NOT EXISTS idx_tx_prod ON transactions(production_id);
+    CREATE TABLE IF NOT EXISTS journal (id INTEGER PRIMARY KEY AUTOINCREMENT, tx_id INTEGER, debit_account INTEGER, credit_account INTEGER, amount REAL NOT NULL);
+    CREATE TABLE IF NOT EXISTS rates (key TEXT PRIMARY KEY, value REAL NOT NULL DEFAULT 0);
+    CREATE TABLE IF NOT EXISTS bank_accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, bank TEXT, account_number TEXT, iban TEXT, swift TEXT, notes TEXT);
+  `);
+}
+
+// Views
+function stat(k,v){ return el('div',{class:'stat'},[el('div',{class:'k'},k), el('div',{class:'v'},String(v))]); }
+function renderDashboard(v){
+  const income=execObj(`SELECT IFNULL(SUM(amount),0) s FROM transactions WHERE type='income'`)[0]?.s||0;
+  const expense=execObj(`SELECT IFNULL(SUM(amount),0) s FROM transactions WHERE type='expense'`)[0]?.s||0;
+  const net=income-expense;
+  const prods=execObj(`SELECT COUNT(*) c FROM productions`)[0]?.c||0;
+  const evts=execObj(`SELECT COUNT(*) c FROM events`)[0]?.c||0;
+  const vols=execObj(`SELECT COUNT(*) c FROM volunteers`)[0]?.c||0;
+  v.append(el('div',{class:'grid cols-3'},[ stat('Income',money(income)), stat('Expenses',money(expense)), stat('Net',money(net)), stat('Productions',prods), stat('Events',evts), stat('Volunteers',vols) ]));
+}
+
+function renderProductions(v){
+  const rows=execObj(`SELECT * FROM productions ORDER BY COALESCE(open_date,'9999-12-31') DESC, id DESC`);
+  const card=el('div',{class:'card'});
+  card.append(el('div',{class:'toolbar'},[ el('button',{class:'btn pri',onclick:()=>editProduction()},'Add Production'), el('button',{class:'btn err',onclick:wipeSampleData},'Empty / Wipe Sample Data') ]));
+  const tbl=el('table'); tbl.append(tableHead(['Title','Open','Close','Notes']));
+  rows.forEach(r=> tbl.append(el('tr',{},[ el('td',{},r.title||''), el('td',{},r.open_date||''), el('td',{},r.close_date||''), el('td',{},r.notes||'') ])) );
+  card.append(tbl); v.append(card);
+}
+function editProduction(id){
+  const rec=id? execObj(`SELECT * FROM productions WHERE id=${id}`)[0] : {title:'',open_date:'',close_date:'',notes:''};
+  openDialog('Production', form=>{
+    form.append(formRow('Title', input('text','title',rec.title,true)));
+    form.append(formRow('Open', input('date','open_date',rec.open_date)));
+    form.append(formRow('Close', input('date','close_date',rec.close_date)));
+    form.append(formRow('Notes', textarea('notes',rec.notes)));
+  }, data=>{
+    if(id){
+      run(`UPDATE productions SET title='${escapeSql(data.title)}', open_date='${data.open_date||''}', close_date='${data.close_date||''}', notes='${escapeSql(data.notes)}' WHERE id=${id}`);
+    } else {
+      run(`INSERT INTO productions(title,open_date,close_date,notes) VALUES('${escapeSql(data.title)}','${data.open_date||''}','${data.close_date||''}','${escapeSql(data.notes)}')`);
+    }
+    route('productions');
+  });
+}
+
+function renderEvents(v){
+  const rows=execObj(`SELECT e.*, (SELECT title FROM productions p WHERE p.id=e.production_id) AS production FROM events e ORDER BY start DESC`);
+  const card=el('div',{class:'card'});
+  card.append(el('div',{class:'toolbar'},[ el('button',{class:'btn pri',onclick:()=>editEvent()},'Add Event'), el('button',{class:'btn err',onclick:wipeSampleData},'Empty / Wipe Sample Data') ]));
+  const tbl=el('table'); tbl.append(tableHead(['Production','Kind','Start','End','Venue','Notes','']));
+  rows.forEach(r=> tbl.append(el('tr',{},[ el('td',{},r.production||''), el('td',{},r.kind||''), el('td',{},r.start||''), el('td',{},r.end||''), el('td',{},r.venue||''), el('td',{},r.notes||''), el('td',{}, btnRow([['Edit',()=>editEvent(r.id)], ['Delete',()=>{ if(confirm('Delete this event?')){ run(`DELETE FROM events WHERE id=${r.id}`); route('events'); } }]]) ) ])) );
+  card.append(tbl); v.append(card);
+}
+function editEvent(id){
+  const rec=id? execObj(`SELECT * FROM events WHERE id=${id}`)[0] : {production_id:null,kind:'Rehearsal',start:'',end:'',venue:'',notes:''};
+  const prods=execObj(`SELECT id,title FROM productions ORDER BY title`);
+  const kinds=execObj(`SELECT value FROM lists WHERE group_key='event_kind' ORDER BY value`).map(r=>r.value);
+  openDialog('Event', form=>{
+    form.append(formRow('Production', selectGeneric('production_id', prods.map(p=>({value:p.id,label:p.title})), rec.production_id)));
+    form.append(formRow('Kind', select('kind', kinds, rec.kind)));
+    form.append(formRow('Start', input('datetime-local','start',rec.start)));
+    form.append(formRow('End', input('datetime-local','end',rec.end)));
+    form.append(formRow('Venue', input('text','venue',rec.venue)));
+    form.append(formRow('Notes', textarea('notes',rec.notes)));
+  }, data=>{
+    const pid=data.production_id? Number(data.production_id): 'NULL';
+    if(id){
+      run(`UPDATE events SET production_id=${pid}, kind='${escapeSql(data.kind)}', start='${data.start}', end='${data.end}', venue='${escapeSql(data.venue)}', notes='${escapeSql(data.notes)}' WHERE id=${id}`);
+    } else {
+      run(`INSERT INTO events(production_id,kind,start,end,venue,notes) VALUES(${pid},'${escapeSql(data.kind)}','${data.start}','${data.end}','${escapeSql(data.venue)}','${escapeSql(data.notes)}')`);
+    }
+    route('events');
+  });
+}
+
+function renderVolunteers(v){
+  const rows=execObj(`SELECT * FROM volunteers ORDER BY name`);
+  const card=el('div',{class:'card'});
+  card.append(el('div',{class:'toolbar'},[ el('button',{class:'btn pri',onclick:()=>editVolunteer()},'Add Volunteer'), el('button',{class:'btn err',onclick:wipeSampleData},'Empty / Wipe Sample Data') ]));
+  const tbl=el('table'); tbl.append(tableHead(['Name','Email','Phone','Skills','Notes','']));
+  rows.forEach(r=> tbl.append(el('tr',{},[ el('td',{},r.name), el('td',{},r.email||''), el('td',{},r.phone||''), el('td',{},r.skills||''), el('td',{},r.notes||''), el('td',{}, btnRow([['Availability',()=>manageAvailability(r.id)], ['Edit',()=>editVolunteer(r.id)], ['Delete',()=>{ if(confirm('Delete volunteer?')){ run(`DELETE FROM volunteers WHERE id=${r.id}`); route('volunteers'); } }]]) ) ])) );
+  card.append(tbl); v.append(card);
+}
+function editVolunteer(id){
+  const rec=id? execObj(`SELECT * FROM volunteers WHERE id=${id}`)[0] : {name:'',email:'',phone:'',skills:'',notes:''};
+  openDialog('Volunteer', form=>{
+    form.append(formRow('Name', input('text','name',rec.name,true)));
+    form.append(formRow('Email', input('email','email',rec.email)));
+    form.append(formRow('Phone', input('tel','phone',rec.phone)));
+    form.append(formRow('Skills', input('text','skills',rec.skills)));
+    form.append(formRow('Notes', textarea('notes',rec.notes)));
+  }, data=>{
+    if(id){
+      run(`UPDATE volunteers SET name='${escapeSql(data.name)}', email='${escapeSql(data.email)}', phone='${escapeSql(data.phone)}', skills='${escapeSql(data.skills)}', notes='${escapeSql(data.notes)}' WHERE id=${id}`);
+    } else {
+      run(`INSERT INTO volunteers(name,email,phone,skills,notes) VALUES('${escapeSql(data.name)}','${escapeSql(data.email)}','${escapeSql(data.phone)}','${escapeSql(data.skills)}','${escapeSql(data.notes)}')`);
+    }
+    route('volunteers');
+  });
+}
+function manageAvailability(volunteer_id){
+  const rec=execObj(`SELECT * FROM volunteers WHERE id=${volunteer_id}`)[0];
+  openDialog('Availability: '+rec.name, form=>{
+    const rows=execObj(`SELECT * FROM volunteer_availability WHERE volunteer_id=${volunteer_id} ORDER BY weekday,start`);
+    const tbl=el('table'); tbl.append(tableHead(['Weekday','Start','End','']));
+    rows.forEach(r=> tbl.append(el('tr',{},[ el('td',{},['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][r.weekday]||r.weekday), el('td',{},r.start||''), el('td',{},r.end||''), el('td',{}, btnRow([['Edit',()=>editAvail(r.id,volunteer_id)], ['Delete',()=>{ run(`DELETE FROM volunteer_availability WHERE id=${r.id}`); closeDialog(); manageAvailability(volunteer_id); }]]) ) ])) );
+    form.append(el('div',{class:'toolbar'},[ el('button',{class:'btn pri',onclick:()=>editAvail(null,volunteer_id)},'Add Row') ]), tbl);
+  });
+}
+function editAvail(id, volunteer_id){
+  const rec=id? execObj(`SELECT * FROM volunteer_availability WHERE id=${id}`)[0] : {weekday:1,start:'18:00',end:'21:00'};
+  openDialog('Availability Row', form=>{
+    form.append(formRow('Weekday', select('weekday',[0,1,2,3,4,5,6],rec.weekday)));
+    form.append(formRow('Start', input('time','start',rec.start)));
+    form.append(formRow('End', input('time','end',rec.end)));
+  }, data=>{
+    const wd=Number(data.weekday);
+    if(id){
+      run(`UPDATE volunteer_availability SET weekday=${wd}, start='${data.start}', end='${data.end}' WHERE id=${id}`);
+    } else {
+      run(`INSERT INTO volunteer_availability(volunteer_id,weekday,start,end) VALUES(${volunteer_id},${wd},'${data.start}','${data.end}')`);
+    }
+    closeDialog(); manageAvailability(volunteer_id);
+  });
+}
+
+function renderTx(kind){
+  const v=document.getElementById('view');
+  const card=el('div',{class:'card'});
+  card.append(el('div',{class:'toolbar'},[ el('button',{class:'btn pri',onclick:()=>editTx(kind,null)},`Add ${cap(kind)}`), el('button',{class:'btn err',onclick:wipeSampleData},'Empty / Wipe Sample Data') ]));
+  const rows=execObj(`SELECT t.*, (SELECT title FROM productions p WHERE p.id=t.production_id) AS production FROM transactions t WHERE t.type='${kind}' ORDER BY t.tx_date DESC, t.id DESC`);
+  const tbl=el('table'); tbl.append(tableHead(['Date','Amount','Category','Production','Method','Memo','']));
+  rows.forEach(r=> tbl.append(el('tr',{},[ el('td',{},r.tx_date), el('td',{},money(r.amount)), el('td',{},r.category||''), el('td',{},r.production||''), el('td',{},r.method||''), el('td',{},r.memo||''), el('td',{}, btnRow([ ['Edit',()=>editTx(kind,r.id)], ['Delete',()=>{ if(confirm('Delete this transaction?')){ run(`DELETE FROM transactions WHERE id=${r.id}`); route(kind); } }] ])) ])) );
+  card.append(tbl); v.append(card);
+}
+function editTx(kind,id){
+  const rec=id? execObj(`SELECT * FROM transactions WHERE id=${id}`)[0] : {tx_date:new Date().toISOString().slice(0,10), type:kind, amount:0, account_id:null, production_id:null, event_id:null, method:'', category:'', memo:''};
+  const cats=execObj(`SELECT value FROM lists WHERE group_key='${kind==='income'?'income_cat':'expense_cat'}' ORDER BY value`).map(r=>r.value);
+  const methods=execObj(`SELECT value FROM lists WHERE group_key='payment_method' ORDER BY value`).map(r=>r.value);
+  const prods=execObj(`SELECT id,title FROM productions ORDER BY title`);
+  openDialog(cap(kind), form=>{
+    form.append(formRow('Date', input('date','tx_date',rec.tx_date)));
+    form.append(formRow('Amount', input('number','amount',rec.amount)));
+    form.append(formRow('Category', select('category', cats, rec.category)));
+    form.append(formRow('Production', selectGeneric('production_id', prods.map(p=>({value:p.id,label:p.title})), rec.production_id)));
+    form.append(formRow('Method', select('method', methods, rec.method)));
+    form.append(formRow('Memo', textarea('memo',rec.memo)));
+  }, data=>{
+    const vals={ date:data.tx_date, amt:Number(data.amount)||0, cat:data.category||'', pid:data.production_id? Number(data.production_id): 'NULL', m:data.method||'', memo:data.memo||'' };
+    if(id){
+      run(`UPDATE transactions SET tx_date='${vals.date}', amount=${vals.amt}, category='${escapeSql(vals.cat)}', production_id=${vals.pid}, method='${escapeSql(vals.m)}', memo='${escapeSql(vals.memo)}' WHERE id=${id}`);
+    } else {
+      run(`INSERT INTO transactions(tx_date,type,amount,production_id,method,category,memo) VALUES ('${vals.date}','${kind}',${vals.amt},${vals.pid},'${escapeSql(vals.m)}','${escapeSql(vals.cat)}','${escapeSql(vals.memo)}')`);
+    }
+    route(kind);
+  });
+}
+
+// =============== Config Drawer ===============
+function migrateConfig(){
+  run(`
+    CREATE TABLE IF NOT EXISTS rates (key TEXT PRIMARY KEY, value REAL NOT NULL DEFAULT 0);
+    CREATE TABLE IF NOT EXISTS bank_accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, bank TEXT, account_number TEXT, iban TEXT, swift TEXT, notes TEXT);
+  `);
+}
+migrateConfig();
+
+const cfg = {
+  drawer:null, tab:'categories',
+  open(){ this.drawer.classList.add('open'); this.render(); },
+  close(){ this.drawer.classList.remove('open'); },
+  setTab(t){ this.tab=t; this.render(); },
+  render(){
+    document.querySelectorAll('.config-tabbar .btn').forEach(b=> b.classList.toggle('active', b.dataset.cfgTab===this.tab));
+    const host=document.getElementById('cfg-content'); host.innerHTML='';
+    if(this.tab==='categories') renderCfgCategories(host);
+    else if(this.tab==='rates') renderCfgRates(host);
+    else if(this.tab==='banks') renderCfgBanks(host);
+    else if(this.tab==='maintenance') renderCfgMaintenance(host);
+  }
+};
+
+function cfgListBlock(title, group_key){
+  const wrap=el('div',{class:'cfg-group'}); wrap.append(el('h3',{},title));
+  const listWrap=el('div',{class:'cfg-list'});
+  const rows=execObj(`SELECT id,value FROM lists WHERE group_key='${group_key}' ORDER BY value`);
+  rows.forEach(r=>{
+    const row=el('div',{class:'row'}), inp=el('input',{type:'text',value:r.value});
+    const save=el('button',{class:'btn'},'Save'), del=el('button',{class:'btn err'},'Delete');
+    save.onclick=()=>{ run("UPDATE lists SET value='"+escapeSql(inp.value)+"' WHERE id="+r.id); cfg.render(); };
+    del.onclick =()=>{ run("DELETE FROM lists WHERE id="+r.id); cfg.render(); };
+    row.append(inp,save,del); listWrap.append(row);
+  });
+  const addRow=el('div',{class:'row'}), addInp=el('input',{type:'text',placeholder:'New item'});
+  const addBtn=el('button',{class:'btn pri'},'Add');
+  addBtn.onclick=()=>{ if(!addInp.value.trim())return; run("INSERT INTO lists(group_key,value) VALUES ('"+group_key+"','"+escapeSql(addInp.value.trim())+"')"); cfg.render(); };
+  addRow.append(addInp,addBtn); listWrap.append(addRow);
+  wrap.append(listWrap); return wrap;
+}
+function renderCfgCategories(host){
+  host.append(
+    cfgListBlock('Income Categories','income_cat'),
+    cfgListBlock('Expense Categories','expense_cat'),
+    cfgListBlock('Budget Categories','budget_cat'),
+    cfgListBlock('Payment Methods','payment_method'),
+    cfgListBlock('Event Kinds','event_kind'),
+  );
+  host.append(el('div',{class:'cfg-note'},'These lists appear in forms.'));
+}
+
+function renderCfgRates(host){
+  const rows=execObj(`SELECT key,value FROM rates ORDER BY key`);
+  const box=el('div',{class:'cfg-list'});
+  rows.forEach(r=>{
+    const row=el('div',{class:'row'});
+    const k=el('input',{type:'text',value:r.key,disabled:true});
+    const v=el('input',{type:'text',value:r.value});
+    const save=el('button',{class:'btn'},'Save'), del=el('button',{class:'btn err'},'Delete');
+    save.onclick=()=>{ const num=Number(v.value||0); run("UPDATE rates SET value="+num+" WHERE key='"+escapeSql(r.key)+"'"); cfg.render(); };
+    del.onclick =()=>{ run("DELETE FROM rates WHERE key='"+escapeSql(r.key)+"'"); cfg.render(); };
+    row.append(k,v,save,del); box.append(row);
+  });
+  const add=el('div',{class:'row'}), nk=el('input',{type:'text',placeholder:'rate_key (unique)'}), nv=el('input',{type:'text',placeholder:'0.00'}), addBtn=el('button',{class:'btn pri'},'Add');
+  addBtn.onclick=()=>{ if(!nk.value.trim())return; const num=Number(nv.value||0); run("INSERT INTO rates(key,value) VALUES ('"+escapeSql(nk.value.trim())+"',"+num+")"); cfg.render(); };
+  add.append(nk,nv,addBtn);
+  host.append(el('h3',{},'Rates / Settings'), box, add, el('div',{class:'cfg-note'},'Use for tax %, fees, FX rates, etc.'));
+}
+
+function renderCfgBanks(host){
+  const rows=execObj(`SELECT * FROM bank_accounts ORDER BY id DESC`);
+  const box=el('div',{class:'cfg-list'});
+  rows.forEach(r=>{
+    const row=el('div',{class:'row'});
+    const name=el('input',{type:'text',value:r.name,placeholder:'Name (required)'});
+    const bank=el('input',{type:'text',value:r.bank||'',placeholder:'Bank'});
+    const acct=el('input',{type:'text',value:r.account_number||'',placeholder:'Account #'});
+    const iban=el('input',{type:'text',value:r.iban||'',placeholder:'IBAN'});
+    const swift=el('input',{type:'text',value:r.swift||'',placeholder:'SWIFT'});
+    const save=el('button',{class:'btn'},'Save'), del=el('button',{class:'btn err'},'Delete');
+    save.onclick=()=>{
+      if(!name.value.trim()) { alert('Name required'); return; }
+      run("UPDATE bank_accounts SET name='"+escapeSql(name.value)+"', bank='"+escapeSql(bank.value)+"', account_number='"+escapeSql(acct.value)+"', iban='"+escapeSql(iban.value)+"', swift='"+escapeSql(swift.value)+"' WHERE id="+r.id);
+      cfg.render();
+    };
+    del.onclick=()=>{ run("DELETE FROM bank_accounts WHERE id="+r.id); cfg.render(); };
+    row.append(name,bank,acct,iban,swift,save,del); box.append(row);
+  });
+  const add=el('div',{class:'row'}), n=el('input',{type:'text',placeholder:'Name (required)'}), b=el('input',{type:'text',placeholder:'Bank'}), a=el('input',{type:'text',placeholder:'Account #'}), i=el('input',{type:'text',placeholder:'IBAN'}), s=el('input',{type:'text',placeholder:'SWIFT'}), addBtn=el('button',{class:'btn pri'},'Add');
+  addBtn.onclick=()=>{ if(!n.value.trim()) return; run("INSERT INTO bank_accounts(name,bank,account_number,iban,swift,notes) VALUES ('"+escapeSql(n.value)+"','"+escapeSql(b.value)+"','"+escapeSql(a.value)+"','"+escapeSql(i.value)+"','"+escapeSql(s.value)+"','')"); cfg.render(); };
+  add.append(n,b,a,i,s,addBtn);
+  host.append(el('h3',{},'Bank Accounts'), box, add, el('div',{class:'cfg-note'},'Store IBAN/SWIFT for payouts.'));
+}
+
+function renderCfgMaintenance(host){
+  const actions=el('div',{class:'cfg-actions'});
+  const delTx=el('button',{class:'btn err'},'Delete ALL Transactions');
+  delTx.onclick=()=>{ if(!confirm('Delete ALL transactions?')) return; run('DELETE FROM transactions; DELETE FROM journal;'); alert('All transactions deleted.'); };
+  const wipe=el('button',{class:'btn err'},'Wipe Sample Data (Keep Lists/Accounts)');
+  wipe.onclick=wipeSampleData;
+  const fullReset=el('button',{class:'btn warn'},'Full Reset (Empty DB)');
+  fullReset.onclick=async()=>{ if(!confirm('Completely reset the browser database?')) return; await idbStore.del('sqlite'); alert('Cleared. Reloading…'); location.reload(); };
+  actions.append(delTx,wipe,fullReset);
+  host.append(el('h3',{},'Maintenance'), actions, el('div',{class:'cfg-note'},'Export DB before destructive actions.'));
+}
+function wipeSampleData(){
+  if(!confirm('Wipe productions, events, volunteers, budgets, transactions?')) return;
+  run('DELETE FROM transactions; DELETE FROM journal; DELETE FROM budgets; DELETE FROM events; DELETE FROM volunteer_availability; DELETE FROM volunteers; DELETE FROM productions;');
+  alert('Sample/domain data wiped. Lists, accounts, rates, and banks are preserved.');
+}
+
+// dialog + helpers
+function btnRow(items){ const span=el('span'); items.forEach(([label,onclick])=> span.append(el('button',{class:'btn',onclick,style:'margin-right:6px'},label))); return span; }
+function input(type,name,val='',required=false){ const i=el('input',{type,name,value:val}); if(required) i.required=true; return i; }
+function textarea(name,val=''){ return el('textarea',{name,rows:3},[val]); }
+function select(name, options, val){ const s=el('select',{name}); options.forEach(o=> s.append(el('option',{value:o,selected:String(o)===String(val)},o))); return s; }
+function selectGeneric(name, opts, val){ const s=el('select',{name}); s.append(el('option',{value:''},'—')); opts.forEach(o=> s.append(el('option',{value:o.value,selected:String(o.value)===String(val)},o.label))); return s; }
+function formRow(labelTxt, control){ const wrap=el('div',{class:'grid'}); wrap.append(el('label',{},labelTxt), control); return wrap; }
+function openDialog(title, build, onsubmit){
+  const dlg=el('dialog'); const form=el('form',{class:'grid',method:'dialog'}); build(form);
+  dlg.append(el('header',{},[ el('strong',{},title), el('button',{class:'btn',onclick:()=>dlg.close()},'×') ]),
+    el('div',{class:'content'},[form, el('div',{class:'toolbar',style:'justify-content:flex-end'},[
+      el('button',{class:'btn',onclick:()=>dlg.close()},'Cancel'),
+      el('button',{class:'btn pri',onclick:(e)=>{ e.preventDefault(); const data=Object.fromEntries(new FormData(form).entries()); onsubmit(data); dlg.close(); }},'Save')
+    ]) ]));
+  document.body.append(dlg); dlg.showModal();
+}
+function closeDialog(){ document.querySelectorAll('dialog').forEach(d=>d.close()); }
+
+// export/import/init
+function exportDb(){ const data=db.export(); const blob=new Blob([data],{type:'application/octet-stream'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='theatre-erp.sqlite'; a.click(); URL.revokeObjectURL(a.href); }
+async function importDb(file){ const buf=new Uint8Array(await file.arrayBuffer()); db.close(); db=new SQL.Database(buf); await idbStore.set('sqlite', buf); route('dashboard'); }
+
+async function init(){
+  SQL = await initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${f}` });
+  try{
+    const persisted = await idbStore.get('sqlite');
+    const skipSample = localStorage.getItem('theatre.skipSample') === '1' || location.search.includes('empty=1');
+    if(persisted){
+      db = new SQL.Database(new Uint8Array(persisted));
+    } else if (!skipSample) {
+      const resp = await fetch('theatre-erp-sample.sqlite');
+      if(resp.ok){
+        const buf = new Uint8Array(await resp.arrayBuffer());
+        db = new SQL.Database(buf);
+        await idbStore.set('sqlite', buf);
+      } else {
+        db = new SQL.Database();
+        bootstrap();
+      }
+    } else {
+      db = new SQL.Database();
+      bootstrap();
+    }
+  } catch(e){
+    console.error(e); db = new SQL.Database(); bootstrap();
+  }
+  renderNav(); route('dashboard');
+}
+
+document.addEventListener('DOMContentLoaded', ()=>{
+  document.getElementById('btn-export').onclick = exportDb;
+  document.getElementById('file-import').addEventListener('change', e=>{ const f=e.target.files[0]; if(f) importDb(f); });
+  document.getElementById('btn-backup').onclick = async ()=>{ const data=db.export(); await idbStore.set('sqlite', data); alert('Saved to this browser.'); };
+  document.getElementById('btn-reset').onclick = async ()=>{ if(!confirm('Reset local DB?')) return; await idbStore.del('sqlite'); alert('Cleared. Reloading…'); location.reload(); };
+  document.getElementById('btn-sample').onclick = ()=> alert('Sample DB auto-loads on first visit. To reload, click Reset (New DB).');
+
+  // Config drawer
+  cfg.drawer = document.getElementById('config-drawer');
+  document.getElementById('btn-config-gear').onclick = () => cfg.open();
+  document.getElementById('cfg-close').onclick = () => cfg.close();
+  document.querySelectorAll('[data-cfg-tab]').forEach(b=> b.addEventListener('click', ()=> cfg.setTab(b.dataset.cfgTab)) );
+
+  init();
+});
+  </script>
+</body>
+</html>
